@@ -5,10 +5,11 @@
   ],
   "packageRules": [
     {
-      "description": "PDFsharp 6.5.0 switched from MIT to AGPL-3.0/commercial and throws at runtime without a licence call. Hold at 6.2.x until a licensing decision is made.",
+      "description": "PdfPig is pre-1.0 and may break its API in any release. Keep its updates out of the grouped non-major PR so that each one is reviewed on its own.",
       "matchDatasources": ["nuget"],
-      "matchPackageNames": ["PDFsharp"],
-      "allowedVersions": "<6.5.0"
+      "matchPackageNames": ["PdfPig"],
+      "groupName": "PdfPig",
+      "groupSlug": "pdfpig"
     }
   ]
 }
