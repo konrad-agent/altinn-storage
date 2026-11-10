@@ -129,7 +129,8 @@ public class ApplicationServiceTests
     [Theory]
     [InlineData(null, null)]
     [InlineData(null, new[] { "Task_2", "Task_1" })]
-    [InlineData("Task_2", new string[0])]
+    [InlineData(null, new string[0])]
+    [InlineData("Task_1", new string[0])]
     [InlineData("Task_2", new[] { "Task_1" })]
     public async Task ValidateDataTypeForApp_Success_CurrentTaskInBoundTasksOrDataTypeUnbound(
         string taskId,
@@ -156,6 +157,7 @@ public class ApplicationServiceTests
     [Theory]
     [InlineData(null, new[] { "Task_2", "Task_3" })]
     [InlineData("Task_1", new[] { "Task_2" })]
+    [InlineData("Task_2", new string[0])]
     public async Task ValidateDataTypeForApp_Failed_CurrentTaskNotInBoundTasks(
         string taskId,
         string[] taskIds

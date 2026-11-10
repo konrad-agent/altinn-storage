@@ -79,12 +79,13 @@ public class ApplicationService : IApplicationService
 
     private static bool IsAllowedInTask(DataType dataType, string task)
     {
-        if (dataType.TaskIds is not null)
+        if (dataType.IsBoundToTasks())
         {
             return dataType.IsWritableInTask(task);
         }
 
-        // v8 apps upload taskId instead of taskIds.
+        // v8 apps upload taskId instead of taskIds. An empty taskIds is treated as absent, so it
+        // does not lift a restriction the data type still declares through taskId.
 #pragma warning disable CS0618 // Type or member is obsolete
         return string.IsNullOrEmpty(dataType.TaskId) || dataType.TaskId == task;
 #pragma warning restore CS0618 // Type or member is obsolete
