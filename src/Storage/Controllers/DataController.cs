@@ -181,14 +181,14 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        if (await dataTypeDefinition.CanWrite(_authorizationService, instance) is not true)
+        ActionResult writeError = await AuthorizeDataTypeWrite(
+            dataTypeDefinition,
+            instance,
+            isDelete: true
+        );
+        if (writeError is not null)
         {
-            return Forbid();
-        }
-
-        if (dataTypeDefinition.GetTaskBindingConflict(instance, isDelete: true) is { } conflict)
-        {
-            return Conflict(conflict);
+            return writeError;
         }
 
         DateTime deletedTime = DateTime.UtcNow;
@@ -687,14 +687,14 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        if (await dataTypeDefinition.CanWrite(_authorizationService, instance) is not true)
+        ActionResult writeError = await AuthorizeDataTypeWrite(
+            dataTypeDefinition,
+            instance,
+            isDelete: false
+        );
+        if (writeError is not null)
         {
-            return Forbid();
-        }
-
-        if (dataTypeDefinition.GetTaskBindingConflict(instance, isDelete: false) is { } conflict)
-        {
-            return Conflict(conflict);
+            return writeError;
         }
 
         DateTime creationTime = DateTime.UtcNow;
@@ -864,14 +864,14 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        if (await dataTypeDefinition.CanWrite(_authorizationService, instance) is not true)
+        ActionResult writeError = await AuthorizeDataTypeWrite(
+            dataTypeDefinition,
+            instance,
+            isDelete: false
+        );
+        if (writeError is not null)
         {
-            return Forbid();
-        }
-
-        if (dataTypeDefinition.GetTaskBindingConflict(instance, isDelete: false) is { } conflict)
-        {
-            return Conflict(conflict);
+            return writeError;
         }
 
         if (dataElement.Locked)
@@ -1172,14 +1172,14 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        if (await dataTypeDefinition.CanWrite(_authorizationService, instance) is not true)
+        ActionResult writeError = await AuthorizeDataTypeWrite(
+            dataTypeDefinition,
+            instance,
+            isDelete: false
+        );
+        if (writeError is not null)
         {
-            return Forbid();
-        }
-
-        if (dataTypeDefinition.GetTaskBindingConflict(instance, isDelete: false) is { } conflict)
-        {
-            return Conflict(conflict);
+            return writeError;
         }
 
         Dictionary<string, object> propertyList = new()
@@ -1302,6 +1302,25 @@ public class DataController : ControllerBase
         return application is null
             ? (null, NotFound($"Cannot find application {appId} in storage"))
             : (application, null);
+    }
+
+    private async Task<ActionResult> AuthorizeDataTypeWrite(
+        DataType dataType,
+        InstanceInternal instance,
+        bool isDelete
+    )
+    {
+        if (await dataType.CanWrite(_authorizationService, instance) is not true)
+        {
+            return Forbid();
+        }
+
+        if (dataType.GetTaskBindingConflict(instance, isDelete) is { } conflict)
+        {
+            return Conflict(conflict);
+        }
+
+        return null;
     }
 
     private async Task<(InstanceInternal Instance, ActionResult ErrorMessage)> GetInstanceAsync(
