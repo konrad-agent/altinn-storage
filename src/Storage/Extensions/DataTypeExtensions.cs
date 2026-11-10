@@ -57,6 +57,17 @@ internal static class DataTypeExtensions
     }
 
     /// <summary>
+    /// Whether this data type sets <see cref="DataType.TaskIds"/>, so that its elements may only be written in those tasks.
+    /// </summary>
+    public static bool IsBoundToTasks(this DataType dataType) => dataType.TaskIds is { Count: > 0 };
+
+    /// <summary>
+    /// Whether the data type's task binding allows its elements to be written in the given task.
+    /// </summary>
+    public static bool IsWritableInTask(this DataType dataType, string? task) =>
+        !dataType.IsBoundToTasks() || (task is not null && dataType.TaskIds.Contains(task));
+
+    /// <summary>
     /// Returns why data of this type may not be written in the instance's current task, or null when it may.
     /// </summary>
     /// <remarks>
@@ -69,13 +80,8 @@ internal static class DataTypeExtensions
         bool isDelete
     )
     {
-        if (dataType.TaskIds is not { Count: > 0 } taskIds)
-        {
-            return null;
-        }
-
         string? currentTask = instance.Process?.CurrentTask?.ElementId;
-        if (currentTask is not null && taskIds.Contains(currentTask))
+        if (dataType.IsWritableInTask(currentTask))
         {
             return null;
         }
@@ -89,7 +95,7 @@ internal static class DataTypeExtensions
             return null;
         }
 
-        string boundTasks = string.Join(", ", taskIds);
+        string boundTasks = string.Join(", ", dataType.TaskIds);
         return new ProblemDetails
         {
             Type = "task_binding_conflict",

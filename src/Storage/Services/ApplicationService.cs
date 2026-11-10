@@ -2,6 +2,7 @@
 
 using System;
 using System.Threading.Tasks;
+using Altinn.Platform.Storage.Extensions;
 using Altinn.Platform.Storage.Interface.Models;
 using Altinn.Platform.Storage.Models;
 using Altinn.Platform.Storage.Repository;
@@ -80,7 +81,7 @@ public class ApplicationService : IApplicationService
     {
         if (dataType.TaskIds is not null)
         {
-            return dataType.TaskIds.Count == 0 || dataType.TaskIds.Contains(task);
+            return dataType.IsWritableInTask(task);
         }
 
         // v8 apps upload taskId instead of taskIds.
