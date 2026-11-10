@@ -443,7 +443,7 @@ public class InstanceMutationsController(
 
         HashSet<string> checkedDataTypeIds = new(StringComparer.Ordinal);
         foreach (
-            (string dataTypeId, _) in EnumerateRequestedDataTypeWrites(
+            string dataTypeId in EnumerateRequestedDataTypeIds(
                 mutationRequest,
                 existingDataElementsById
             )
@@ -471,23 +471,18 @@ public class InstanceMutationsController(
         return null;
     }
 
-    private ActionResult ValidateTaskBindings(
-        InstanceMutationRequest mutationRequest,
-        Dictionary<Guid, DataElementInternal> existingDataElementsById,
-        InstanceInternal instance,
-        Application application
-    )
+    private ActionResult ValidateTaskBindings(ValidatedMutationPlan plan, InstanceInternal instance)
     {
-        foreach (
-            (string dataTypeId, bool isDelete) in EnumerateRequestedDataTypeWrites(
-                mutationRequest,
-                existingDataElementsById
-            )
-        )
+        IEnumerable<(DataType DataType, bool IsDelete)> writes =
+        [
+            .. plan.CreateDataElements.Select(create => (create.DataType, false)),
+            .. plan.UpdateDataElements.Select(update => (update.DataType, false)),
+            .. plan.DeleteDataElements.Select(delete => (delete.DataType, true)),
+        ];
+
+        foreach ((DataType dataType, bool isDelete) in writes)
         {
-            // Plan validation rejects undeclared data types with 400.
-            DataType dataType = application.DataTypes.FirstOrDefault(e => e.Id == dataTypeId);
-            if (dataType?.GetTaskBindingConflict(instance, isDelete) is { } conflict)
+            if (dataType.GetTaskBindingConflict(instance, isDelete) is { } conflict)
             {
                 return Conflict(conflict);
             }
@@ -496,7 +491,7 @@ public class InstanceMutationsController(
         return null;
     }
 
-    private static IEnumerable<(string DataTypeId, bool IsDelete)> EnumerateRequestedDataTypeWrites(
+    private static IEnumerable<string> EnumerateRequestedDataTypeIds(
         InstanceMutationRequest mutationRequest,
         Dictionary<Guid, DataElementInternal> existingDataElementsById
     )
@@ -507,7 +502,7 @@ public class InstanceMutationsController(
             ).Where(create => !string.IsNullOrWhiteSpace(create.DataType))
         )
         {
-            yield return (create.DataType, false);
+            yield return create.DataType;
         }
 
         // Updates and deletes resolve the data type from the existing element; elements that no
@@ -523,7 +518,7 @@ public class InstanceMutationsController(
                 ) && !string.IsNullOrWhiteSpace(existingDataElement.DataType)
             )
             {
-                yield return (existingDataElement.DataType, false);
+                yield return existingDataElement.DataType;
             }
         }
 
@@ -538,7 +533,7 @@ public class InstanceMutationsController(
                 ) && !string.IsNullOrWhiteSpace(existingDataElement.DataType)
             )
             {
-                yield return (existingDataElement.DataType, true);
+                yield return existingDataElement.DataType;
             }
         }
     }
@@ -566,17 +561,6 @@ public class InstanceMutationsController(
                 mutationRequest.ExpectedProcessStatus
             );
 
-            ActionResult taskBindingError = ValidateTaskBindings(
-                mutationRequest,
-                existingDataElementsById,
-                instance,
-                application
-            );
-            if (taskBindingError is not null)
-            {
-                return (null, taskBindingError);
-            }
-
             ActionResult validationError = await ValidateMutationPlan(
                 mutationRequest,
                 multipartReader,
@@ -589,6 +573,12 @@ public class InstanceMutationsController(
             if (validationError is not null)
             {
                 return (null, validationError);
+            }
+
+            ActionResult taskBindingError = ValidateTaskBindings(plan, instance);
+            if (taskBindingError is not null)
+            {
+                return (null, taskBindingError);
             }
 
             MutationInstanceUpdates mutationUpdates = BuildMutationInstanceUpdates(
@@ -1273,7 +1263,7 @@ public class InstanceMutationsController(
             }
 
             plan.DeleteDataElements.Add(
-                new PlannedDeleteDataElement(dataElement, delete.IgnoreLock)
+                new PlannedDeleteDataElement(dataElement, dataType, delete.IgnoreLock)
             );
         }
 
@@ -2142,6 +2132,7 @@ public class InstanceMutationsController(
 
     private sealed record PlannedDeleteDataElement(
         DataElementInternal ExistingDataElement,
+        DataType DataType,
         bool IgnoreLock
     );
 
