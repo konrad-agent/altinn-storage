@@ -18,10 +18,6 @@ using Altinn.Platform.Storage.Repository;
 using Altinn.Platform.Storage.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using PdfSharp.Drawing;
-using PdfSharp.Fonts;
-using PdfSharp.Pdf;
-using PdfSharp.Pdf.IO;
 
 namespace Altinn.Platform.Storage.Controllers;
 
@@ -35,17 +31,6 @@ namespace Altinn.Platform.Storage.Controllers;
 [ApiController]
 public class ContentOnDemandController : Controller
 {
-    private const string _primaryFontFamily = "segoe wp";
-    private const string _fallbackFontFamily = "Arial";
-    private const int _fontSize = 9;
-
-    // The watermark numbers are in XUnit points (1/72 inch)
-    private const int _watermarkWidth = 15;
-    private const int _watermarkHeigth = 155;
-    private const int _watermarkMarginW = 18;
-    private const int _watermarkMarginH = 5;
-    private const int _watermarkPosition = _watermarkHeigth + _watermarkMarginH;
-
     private readonly IInstanceRepository _instanceRepository;
     private readonly IBlobRepository _blobRepository;
     private readonly IA2Repository _a2Repository;
@@ -81,13 +66,6 @@ public class ContentOnDemandController : Controller
         _generalSettings = settings.Value;
         _a2OndemandFormattingService = a2OndemandFormattingService;
         _pdfGeneratorClient = pdfGeneratorClient;
-    }
-
-    static ContentOnDemandController()
-    {
-        // Use font resolver and font from the PdfSharp demo code to avoid installing fonts
-        // on the alpine image.
-        GlobalFontSettings.FontResolver = new Helpers.SegoeWpFontResolver();
     }
 
     /// <summary>
@@ -277,41 +255,6 @@ public class ContentOnDemandController : Controller
 
         printViews[^1].LastPage = true;
 
-        using var mergedDoc = new PdfDocument();
-        foreach (var view in printViews)
-        {
-            (string html, PrintViewXslBEList updatedViews) = await GetFormdataAsHtmlString(
-                app,
-                instanceGuid,
-                dataGuid,
-                language,
-                3,
-                cancellationToken,
-                view.PageNumber
-            );
-            if (html is null)
-            {
-                return NotFound();
-            }
-
-            var pdfPages = await _pdfGeneratorClient.GeneratePdf(
-                html,
-                view.IsPortrait,
-                GetScale(updatedViews[0])
-            );
-            using var pageDoc = PdfReader.Open(pdfPages, PdfDocumentOpenMode.Import);
-            for (var i = 0; i < pageDoc.PageCount; i++)
-            {
-                pageDoc.Pages[i].Orientation = view.IsPortrait
-                    ? PdfSharp.PageOrientation.Portrait
-                    : PdfSharp.PageOrientation.Landscape;
-                mergedDoc.AddPage(pageDoc.Pages[i]);
-            }
-        }
-
-        MemoryStream pdfStream = new();
-        mergedDoc.Save(pdfStream);
-
         DateTime created;
         if (instance.DataValues.TryGetValue("A2ArchRefTs", out string a2ArchRefTs))
         {
@@ -332,11 +275,34 @@ public class ContentOnDemandController : Controller
             created.ToString(timestampFormat, CultureInfo.InvariantCulture)
             + $" AR{instance.DataValues["A2ArchRef"]}";
 
-        using var finalPdfDocument = PdfReader.Open(pdfStream, PdfDocumentOpenMode.Modify);
-        AddWaterMarksAndPageNumber(finalPdfDocument, watermark);
-        MemoryStream finalPdfStream = new();
-        finalPdfDocument.Save(finalPdfStream);
-        return finalPdfStream;
+        using var pdf = new A2PdfBuilder(watermark);
+        foreach (var view in printViews)
+        {
+            (string html, PrintViewXslBEList updatedViews) = await GetFormdataAsHtmlString(
+                app,
+                instanceGuid,
+                dataGuid,
+                language,
+                3,
+                cancellationToken,
+                view.PageNumber
+            );
+            if (html is null)
+            {
+                return NotFound();
+            }
+
+            await using Stream pdfPages = await _pdfGeneratorClient.GeneratePdf(
+                html,
+                view.IsPortrait,
+                GetScale(updatedViews[0])
+            );
+            using var pdfBuffer = new MemoryStream();
+            await pdfPages.CopyToAsync(pdfBuffer, cancellationToken);
+            pdf.AddDocument(pdfBuffer.ToArray());
+        }
+
+        return new MemoryStream(pdf.Build());
     }
 
     /// <summary>
@@ -527,7 +493,7 @@ public class ContentOnDemandController : Controller
 
     private static float GetScale(PrintViewXslBE infoPathViewXslBE)
     {
-        float margin = _watermarkMarginW + _watermarkWidth;
+        float margin = (float)(A2PdfBuilder.EdgeMargin + A2PdfBuilder.BoxThickness);
 
         // Set A4 width in XUnit points (1/72 inch)
         float pageWidth = infoPathViewXslBE.IsPortrait ? 595.92f : 842.88f;
@@ -540,74 +506,6 @@ public class ContentOnDemandController : Controller
         }
 
         return 1;
-    }
-
-    private static void AddWaterMarksAndPageNumber(PdfDocument document, string watermark)
-    {
-        for (var idx = 0; idx < document.Pages.Count; idx++)
-        {
-            var page = document.Pages[idx];
-
-            // Get an XGraphics object for drawing beneath the existing content.
-            using XGraphics gfx = XGraphics.FromPdfPage(page, XGraphicsPdfPageOptions.Append);
-
-            var state = gfx.Save();
-            DrawWatermark(
-                gfx,
-                page.Width.Point - _watermarkMarginW,
-                _watermarkPosition,
-                -90,
-                watermark
-            );
-            gfx.Restore(state);
-            state = gfx.Save();
-            DrawWatermark(
-                gfx,
-                _watermarkMarginW,
-                page.Height.Point - _watermarkPosition,
-                90,
-                watermark
-            );
-            gfx.Restore(state);
-            gfx.DrawString(
-                (idx + 1).ToString(),
-                GetFont(),
-                XBrushes.Black,
-                new XPoint(page.Width.Point - 23, page.Height.Point - 5)
-            );
-        }
-    }
-
-    private static void DrawWatermark(
-        XGraphics gfx,
-        double x,
-        double y,
-        double angle,
-        string watermark
-    )
-    {
-        XRect rect = new(x, y, _watermarkHeigth, _watermarkWidth);
-        XBrush brush = XBrushes.Red;
-        XStringFormat format = new()
-        {
-            Alignment = XStringAlignment.Center,
-            LineAlignment = XLineAlignment.Center,
-        };
-        gfx.RotateAtTransform(angle, new XPoint(x, y));
-        gfx.DrawRectangle(XPens.Red, rect);
-        gfx.DrawString(watermark, GetFont(), brush, rect, format);
-    }
-
-    private static XFont GetFont()
-    {
-        try
-        {
-            return new(_primaryFontFamily, _fontSize);
-        }
-        catch (Exception)
-        {
-            return new(_fallbackFontFamily, _fontSize);
-        }
     }
 }
 
