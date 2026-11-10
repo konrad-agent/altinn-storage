@@ -2813,6 +2813,84 @@ public class DataControllerUnitTests
         );
     }
 
+    [Theory]
+    [InlineData(DataWriteEndpoint.CreateAndUpload, true)]
+    [InlineData(DataWriteEndpoint.Overwrite, true)]
+    [InlineData(DataWriteEndpoint.Delete, true)]
+    [InlineData(DataWriteEndpoint.UpdateMetadata, true)]
+    [InlineData(DataWriteEndpoint.CreateAndUpload, false)]
+    [InlineData(DataWriteEndpoint.Overwrite, false)]
+    [InlineData(DataWriteEndpoint.Delete, false)]
+    [InlineData(DataWriteEndpoint.UpdateMetadata, false)]
+    public async Task DataWrite_TaskBoundDataType_PinsTheCheckedProcessStateVersion(
+        DataWriteEndpoint endpoint,
+        bool taskBound
+    )
+    {
+        // Arrange
+        TaskBoundTestFixture fixture = GetTaskBoundTestController(
+            endpoint,
+            taskBound ? ["Task_1"] : null
+        );
+
+        // Act
+        await CallDataWriteEndpoint(fixture.Controller, endpoint);
+
+        // Assert
+        int? expectedProcessStateVersion = taskBound ? 1 : null;
+        switch (endpoint)
+        {
+            case DataWriteEndpoint.CreateAndUpload:
+                fixture.DataService.Verify(
+                    service =>
+                        service.UploadDataAndCreateDataElement(
+                            It.IsAny<InstanceInternal>(),
+                            It.IsAny<Stream>(),
+                            It.IsAny<DataElementCreateOptions>(),
+                            It.IsAny<long>(),
+                            It.IsAny<int?>(),
+                            null,
+                            expectedProcessStateVersion,
+                            It.IsAny<CancellationToken>()
+                        ),
+                    Times.Once
+                );
+                break;
+            case DataWriteEndpoint.Delete:
+                fixture.InstanceMutationRepository.Verify(
+                    repository =>
+                        repository.Apply(
+                            It.IsAny<Guid>(),
+                            It.IsAny<long>(),
+                            It.Is<InstanceMutationCommit>(commit =>
+                                commit.ExpectedInstanceVersion == null
+                                && commit.ExpectedProcessStateVersion == expectedProcessStateVersion
+                            ),
+                            It.IsAny<CancellationToken>()
+                        ),
+                    Times.Once
+                );
+                break;
+            default:
+                fixture.DataRepository.Verify(
+                    repository =>
+                        repository.Update(
+                            It.IsAny<Guid>(),
+                            It.IsAny<Guid>(),
+                            It.IsAny<Dictionary<string, object>>(),
+                            It.Is<DataElementUpdateContext>(context =>
+                                context.ExpectedInstanceVersion == null
+                                && context.ExpectedProcessStateVersion
+                                    == expectedProcessStateVersion
+                            ),
+                            It.IsAny<CancellationToken>()
+                        ),
+                    Times.Once
+                );
+                break;
+        }
+    }
+
     [Fact]
     public async Task Update_DataTypeDiffersFromStoredElement_ReturnsBadRequest()
     {
@@ -3346,8 +3424,8 @@ public class DataControllerUnitTests
                 It.IsAny<DataElementCreateOptions>(),
                 It.IsAny<long>(),
                 It.IsAny<int?>(),
-                null,
-                null,
+                It.IsAny<int?>(),
+                It.IsAny<int?>(),
                 It.IsAny<CancellationToken>()
             )
         );

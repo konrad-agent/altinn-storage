@@ -181,9 +181,10 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        ActionResult writeError = await AuthorizeDataTypeWrite(
+        (preconditions, ActionResult writeError) = await AuthorizeDataTypeWrite(
             dataTypeDefinition,
             instance,
+            preconditions,
             isDelete: true
         );
         if (writeError is not null)
@@ -687,9 +688,10 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        ActionResult writeError = await AuthorizeDataTypeWrite(
+        (preconditions, ActionResult writeError) = await AuthorizeDataTypeWrite(
             dataTypeDefinition,
             instance,
+            preconditions,
             isDelete: false
         );
         if (writeError is not null)
@@ -864,9 +866,10 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        ActionResult writeError = await AuthorizeDataTypeWrite(
+        (preconditions, ActionResult writeError) = await AuthorizeDataTypeWrite(
             dataTypeDefinition,
             instance,
+            preconditions,
             isDelete: false
         );
         if (writeError is not null)
@@ -1172,9 +1175,10 @@ public class DataController : ControllerBase
             return dataTypeError;
         }
 
-        ActionResult writeError = await AuthorizeDataTypeWrite(
+        (preconditions, ActionResult writeError) = await AuthorizeDataTypeWrite(
             dataTypeDefinition,
             instance,
+            preconditions,
             isDelete: false
         );
         if (writeError is not null)
@@ -1304,23 +1308,44 @@ public class DataController : ControllerBase
             : (application, null);
     }
 
-    private async Task<ActionResult> AuthorizeDataTypeWrite(
+    /// <summary>
+    /// Checks that the caller may write data of this type in the instance's current task. For a data type
+    /// bound to tasks, the returned preconditions pin the process-state version the check read, so the
+    /// write fails with a version mismatch if the process moves to another task before it commits.
+    /// </summary>
+    private async Task<(
+        VersionPreconditions Preconditions,
+        ActionResult Error
+    )> AuthorizeDataTypeWrite(
         DataType dataType,
         InstanceInternal instance,
+        VersionPreconditions preconditions,
         bool isDelete
     )
     {
         if (await dataType.CanWrite(_authorizationService, instance) is not true)
         {
-            return Forbid();
+            return (null, Forbid());
         }
 
         if (dataType.GetTaskBindingConflict(instance, isDelete) is { } conflict)
         {
-            return Conflict(conflict);
+            return (null, Conflict(conflict));
         }
 
-        return null;
+        if (!dataType.IsBoundToTasks())
+        {
+            return (preconditions, null);
+        }
+
+        return (
+            preconditions with
+            {
+                ProcessStateVersion =
+                    preconditions.ProcessStateVersion ?? instance.Versions.ProcessStateVersion,
+            },
+            null
+        );
     }
 
     private async Task<(InstanceInternal Instance, ActionResult ErrorMessage)> GetInstanceAsync(
