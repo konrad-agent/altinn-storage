@@ -393,6 +393,94 @@ public class DataLockControllerTests : IClassFixture<TestApplicationFactory<Data
         );
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LockStatus_TaskBoundDataTypeOutsideItsTasks_ReturnsConflictWithoutWriting(
+        bool lockData
+    )
+    {
+        string dataPathWithData =
+            $"{_versionPrefix}/instances/500004/4c67392f-36c6-42dc-998f-c367e771dccc/data/998c5e56-6f73-494a-9730-6ebd11bffe88/lock";
+        Mock<IDataRepository> dataRepositoryMock = new();
+        HttpClient client = GetTestClient(
+            dataRepositoryMock,
+            CreateApplicationRepositoryWithDefaultDataTypeBoundTo("Task_2")
+        );
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            PrincipalUtil.GetToken(10016, 500004, 3)
+        );
+
+        HttpResponseMessage response = lockData
+            ? await client.PutAsync(dataPathWithData, null)
+            : await client.DeleteAsync(dataPathWithData);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains(
+            "can only be modified in Task_2 (current task Task_1)",
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal
+        );
+        dataRepositoryMock.Verify(
+            repository =>
+                repository.UpdateLockStatus(
+                    It.IsAny<Guid>(),
+                    It.IsAny<Guid>(),
+                    It.IsAny<bool>(),
+                    It.IsAny<CancellationToken>()
+                ),
+            Times.Never
+        );
+    }
+
+    [Theory]
+    [InlineData(true, HttpStatusCode.Created)]
+    [InlineData(false, HttpStatusCode.OK)]
+    public async Task LockStatus_TaskBoundDataTypeInItsTasks_Succeeds(
+        bool lockData,
+        HttpStatusCode expectedStatusCode
+    )
+    {
+        string dataPathWithData =
+            $"{_versionPrefix}/instances/500004/4c67392f-36c6-42dc-998f-c367e771dccc/data/998c5e56-6f73-494a-9730-6ebd11bffe88/lock";
+        HttpClient client = GetTestClient(
+            applicationRepositoryMock: CreateApplicationRepositoryWithDefaultDataTypeBoundTo(
+                "Task_1"
+            )
+        );
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            PrincipalUtil.GetToken(10016, 500004, 3)
+        );
+
+        HttpResponseMessage response = lockData
+            ? await client.PutAsync(dataPathWithData, null)
+            : await client.DeleteAsync(dataPathWithData);
+
+        Assert.Equal(expectedStatusCode, response.StatusCode);
+    }
+
+    private static Mock<IApplicationRepository> CreateApplicationRepositoryWithDefaultDataTypeBoundTo(
+        string taskId
+    )
+    {
+        Mock<IApplicationRepository> applicationRepositoryMock = new();
+        applicationRepositoryMock
+            .Setup(repository =>
+                repository.FindOne("tdd/read-write-unlock", "tdd", It.IsAny<CancellationToken>())
+            )
+            .ReturnsAsync(
+                new Application
+                {
+                    Id = "tdd/read-write-unlock",
+                    Org = "tdd",
+                    DataTypes = [new DataType { Id = "default", TaskIds = [taskId] }],
+                }
+            );
+        return applicationRepositoryMock;
+    }
+
     private static void AssertDataLockHasCorrectStatus(
         DataElement dataElement,
         bool expectedLockStatus
@@ -414,7 +502,10 @@ public class DataLockControllerTests : IClassFixture<TestApplicationFactory<Data
         }
     }
 
-    private HttpClient GetTestClient(Mock<IDataRepository> repositoryMock = null)
+    private HttpClient GetTestClient(
+        Mock<IDataRepository> repositoryMock = null,
+        Mock<IApplicationRepository> applicationRepositoryMock = null
+    )
     {
         // No setup required for these services. They are not in use by the InstanceController
         Mock<IKeyVaultClientWrapper> keyVaultWrapper = new Mock<IKeyVaultClientWrapper>();
@@ -431,6 +522,11 @@ public class DataLockControllerTests : IClassFixture<TestApplicationFactory<Data
                     if (repositoryMock is not null)
                     {
                         services.AddSingleton(repositoryMock.Object);
+                    }
+
+                    if (applicationRepositoryMock is not null)
+                    {
+                        services.AddSingleton(applicationRepositoryMock.Object);
                     }
 
                     services.AddSingleton<

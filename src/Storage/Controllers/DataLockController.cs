@@ -24,6 +24,7 @@ namespace Altinn.Platform.Storage.Controllers;
 public class DataLockController : ControllerBase
 {
     private readonly IInstanceRepository _instanceRepository;
+    private readonly IApplicationRepository _applicationRepository;
     private readonly IDataRepository _dataRepository;
     private readonly IAuthorization _authorizationService;
     private readonly IProcessAuthorizer _processAuthorizer;
@@ -32,17 +33,20 @@ public class DataLockController : ControllerBase
     /// Initializes a new instance of the <see cref="DataLockController"/> class
     /// </summary>
     /// <param name="instanceRepository">the instance repository</param>
+    /// <param name="applicationRepository">the application repository</param>
     /// <param name="dataRepository">the data repository handler</param>
     /// <param name="authorizationService">the authorization service.</param>
     /// <param name="processAuthorizer">the process authorizer.</param>
     public DataLockController(
         IInstanceRepository instanceRepository,
+        IApplicationRepository applicationRepository,
         IDataRepository dataRepository,
         IAuthorization authorizationService,
         IProcessAuthorizer processAuthorizer
     )
     {
         _instanceRepository = instanceRepository;
+        _applicationRepository = applicationRepository;
         _dataRepository = dataRepository;
         _authorizationService = authorizationService;
         _processAuthorizer = processAuthorizer;
@@ -94,6 +98,16 @@ public class DataLockController : ControllerBase
         {
             VersionPreconditionHelper.WriteVersionResponseHeaders(Response, instance);
             return Ok(dataElement.ToApiModel());
+        }
+
+        ActionResult? taskBindingError = await CheckTaskBinding(
+            instance,
+            dataElement,
+            cancellationToken
+        );
+        if (taskBindingError is not null)
+        {
+            return taskBindingError;
         }
 
         try
@@ -149,7 +163,7 @@ public class DataLockController : ControllerBase
         (InstanceInternal? instance, _) = await GetInstanceAsync(
             instanceGuid,
             instanceOwnerPartyId,
-            false,
+            true,
             cancellationToken
         );
         if (instance == null)
@@ -164,6 +178,16 @@ public class DataLockController : ControllerBase
         if (!authorized)
         {
             return Forbid();
+        }
+
+        ActionResult? taskBindingError = await CheckTaskBinding(
+            instance,
+            instance.Data.FirstOrDefault(d => d.Id == dataGuid),
+            cancellationToken
+        );
+        if (taskBindingError is not null)
+        {
+            return taskBindingError;
         }
 
         try
@@ -190,6 +214,35 @@ public class DataLockController : ControllerBase
                 ? StatusCode((int)e.StatusCodeSuggestion)
                 : StatusCode(500);
         }
+    }
+
+    /// <summary>
+    /// The lock flag is part of the data element, so it follows the data type's task binding like any other
+    /// update. A missing element is left to the repository, which reports it as not found.
+    /// </summary>
+    private async Task<ActionResult?> CheckTaskBinding(
+        InstanceInternal instance,
+        DataElementInternal? dataElement,
+        CancellationToken cancellationToken
+    )
+    {
+        if (dataElement is null)
+        {
+            return null;
+        }
+
+        Application? application = await _applicationRepository.FindOne(
+            instance.AppId,
+            instance.Org,
+            cancellationToken
+        );
+        DataType? dataType = application?.DataTypes?.Find(d => d.Id == dataElement.DataType);
+        if (dataType?.GetTaskBindingConflict(instance, isDelete: false) is { } conflict)
+        {
+            return Conflict(conflict);
+        }
+
+        return null;
     }
 
     private async Task<(InstanceInternal? Instance, ActionResult? ErrorMessage)> GetInstanceAsync(

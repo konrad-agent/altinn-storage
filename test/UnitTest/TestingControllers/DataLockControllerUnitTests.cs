@@ -432,6 +432,7 @@ public class DataLockControllerUnitTests
 
         var sut = new DataLockController(
             instanceRepositoryMock.Object,
+            new Mock<IApplicationRepository>().Object,
             dataRepositoryMock.Object,
             authorizationMock.Object,
             processAuthorizerMock.Object
