@@ -100,7 +100,9 @@ public class PdfMergerTests
 
         using var result = PigDocument.Open(merger.Save());
 
-        Assert.Equal((594.96, 841.92), Size(result, 1), new SizeComparer());
+        using var source = PigDocument.Open(ReadFixture("chromium-landscape.pdf"));
+        (double width, double height) = Size(source, 1);
+        Assert.Equal((height, width), Size(result, 1), new SizeComparer());
     }
 
     [Fact]
