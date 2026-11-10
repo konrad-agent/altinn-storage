@@ -81,9 +81,9 @@ public class A2PdfBuilderTests
                 .Select(l => l.Value);
             Assert.Equal(pageNumber.ToString(), string.Concat(pageNumberLetters));
 
-            // Right box: between the edge margin and the page edge, near the top.
+            // Right box: near the top.
             var rightEdge = page
-                .Letters.Where(l => l.Location.X > page.Width - A2PdfBuilder.EdgeMargin)
+                .Letters.Where(l => IsWatermark(l) && l.Location.X > page.Width / 2)
                 .ToList();
             Assert.Equal(_watermark.Length, rightEdge.Count);
             Assert.All(
@@ -96,8 +96,10 @@ public class A2PdfBuilderTests
                     )
             );
 
-            // Left box: inside the edge margin, near the bottom.
-            var leftEdge = page.Letters.Where(l => l.Location.X < A2PdfBuilder.EdgeMargin).ToList();
+            // Left box: near the bottom.
+            var leftEdge = page
+                .Letters.Where(l => IsWatermark(l) && l.Location.X < page.Width / 2)
+                .ToList();
             Assert.Equal(_watermark.Length, leftEdge.Count);
             Assert.All(leftEdge, l => Assert.InRange(l.Location.Y, 0, A2PdfBuilder.BoxLength + 10));
         }
@@ -112,7 +114,9 @@ public class A2PdfBuilderTests
         using var result = PdfDocument.Open(builder.Build());
 
         Page page = result.GetPage(1);
-        var watermarkLetters = page.Letters.Where(l => l.Location.X < A2PdfBuilder.EdgeMargin);
+        var watermarkLetters = page.Letters.Where(l =>
+            IsWatermark(l) && l.Location.X < page.Width / 2
+        );
         Assert.All(watermarkLetters, l => Assert.Equal((1d, 0d, 0d), l.Color.ToRGBValues()));
     }
 
@@ -126,7 +130,9 @@ public class A2PdfBuilderTests
         using var result = PdfDocument.Open(builder.Build());
 
         Page page = result.GetPage(1);
-        var left = page.Letters.Where(l => l.Location.X < A2PdfBuilder.EdgeMargin).ToList();
+        var left = page
+            .Letters.Where(l => IsWatermark(l) && l.Location.X < page.Width / 2)
+            .ToList();
         double length = Math.Abs(left[^1].EndBaseLine.Y - left[0].StartBaseLine.Y);
         Assert.InRange(length, A2PdfBuilder.BoxLength - 3, A2PdfBuilder.BoxLength);
         Assert.True(A2PdfBuilder.MeasureText(longWatermark, 9) > A2PdfBuilder.BoxLength);
@@ -172,6 +178,12 @@ public class A2PdfBuilderTests
         string folder = Path.GetDirectoryName(typeof(A2PdfBuilderTests).Assembly.Location)!;
         return File.ReadAllBytes(Path.Combine(folder, "data", "pdf", name));
     }
+
+    /// <summary>
+    /// Watermark text runs along the page edge; the page content is horizontal.
+    /// </summary>
+    private static bool IsWatermark(Letter letter) =>
+        letter.TextOrientation != TextOrientation.Horizontal;
 
     private static void AssertSameSize(Page expected, Page actual)
     {
